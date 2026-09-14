@@ -156,6 +156,19 @@ build, torch 2.13.0+cu130 and exllamav3 0.0.43, so E3 can be layered on without 
    `manifest does not bind this environment/image`), and delete `recipe/scripts/__pycache__` if anything imported
    the recipe modules (`generated/private recipe directory`). Then step 9 again.
 
+5. **Structured outputs crash the stock jspark3 stack — the same patch script fixes that too.** Any request with
+   `response_format: json_schema|json_object` or `tool_choice: required|{named}` will sooner or later kill the
+   engine: jspark3's Cadence module (`modules/b5_prefix_verify.py`) narrows a lone speculative step from 8 to 4
+   query positions on the worker, but the scheduler's grammar bitmask still has 8 rows, so
+   `apply_grammar_bitmask` hits `assert num_masks == len(mapping)` → `EngineDeadError` (it took our cluster
+   down twice in one afternoon, first triggered by a friend's agent). The patch script inserts a narrowing of the
+   bitmask in B5's `sample_tokens` wrapper and re-pins the module's sha. It also bind-mounts MiaAI-Lab's
+   `patch_xgrammar_termination.py` output (vLLM PRs #52805/#53046, two files under `vllm/v1/structured_output/`,
+   produced in a throwaway container from the pinned image into `~/recipe-jspark3/xgrammar/`) — that one alone
+   did **not** fix the crash here, but the upstream fixes are real. After both, 10+ JSON-schema and
+   `tool_choice: required` requests in a row left the engine alive. Tip: JSON schema + thinking needs a real
+   token budget (`max_tokens` ≥ 2–4k), or the answer is cut off inside the reasoning.
+
 You know it worked when rank 0 logs `exl3 e2 diag … configured_tier=grouped effective_tier=grouped tier_reason=grouped_ok
 sym_fat_moe=1`. KV pool 1,786,610 → 1,778,242 tokens (the E3 scratch), memory headroom unchanged. Cold prefill
 (unique prompts, `scripts/prefill-bench.py`): see `results/bench-2026-09-14.md` — roughly 1,200 → 1,600–1,750 tok/s.

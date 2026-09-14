@@ -46,6 +46,56 @@ EXPECTED_INSERT = (
     '        "/usr/local/lib/python3.12/dist-packages/exl3_fat_moe_ext.so":\n'
     '            (f"{values[\'JSPARK_RECIPE_ROOT\'].rstrip(\'/\').rsplit(\'/\', 1)[0]}/e3/exl3_fat_moe_ext.so", False),\n'
 )
+# MiaAI-Lab's patch_xgrammar_termination.py (vLLM PRs #52805 + #53046) applied to the pinned image in a throwaway
+# container; the two patched files live in ../xgrammar/ and are bind-mounted read-only. Without them a JSON-schema /
+# tool_choice request under speculative decoding can hit "Failed to advance FSM" -> AssertionError in
+# apply_grammar_bitmask -> EngineDeadError (it killed the cluster 2026-09-14 11:13 UTC).
+B5_ANCHOR = (
+    "        try:\n"
+    "            return orig_st(self, *args, **kwargs)\n"
+)
+B5_GRAMMAR_FIX = '''        # JONATHAN-FORK 2026-09-14: a narrowed step (8 -> 4 query positions) must narrow the grammar bitmask too,
+        # or StructuredOutputsWorker.apply_grammar_bitmask asserts num_masks == len(mapping) and kills the engine.
+        try:
+            go = kwargs["grammar_output"] if "grammar_output" in kwargs else (args[0] if args else None)
+            if (go is not None and getattr(go, "grammar_bitmask", None) is not None and rec is not None
+                    and self.execute_model_state is not None and any(w == _NARROW for w in _S.widths.values())):
+                ib = self.execute_model_state.input_batch
+                cu = ib.cu_num_logits_np.tolist()
+                idx = {r: i for i, r in enumerate(ib.req_ids)}
+                grammar_ids = list(go.structured_output_request_ids)
+                want = sum(cu[idx[r] + 1] - cu[idx[r]] for r in grammar_ids if r in idx)
+                bm = go.grammar_bitmask
+                if want and bm.shape[0] > want:
+                    if len(grammar_ids) == 1:
+                        bm2 = bm[:want]
+                        try:
+                            go2 = dataclasses.replace(go, grammar_bitmask=bm2)
+                        except Exception:
+                            object.__setattr__(go, "grammar_bitmask", bm2)
+                            go2 = go
+                        if "grammar_output" in kwargs:
+                            kwargs["grammar_output"] = go2
+                        else:
+                            args = (go2,) + tuple(args[1:])
+                        rec["GRAMMAR_BITMASK_NARROWED"] = [int(bm.shape[0]), int(want)]
+                    else:
+                        _log("grammar bitmask rows %d != mapping %d with %d structured reqs; left as is"
+                             % (int(bm.shape[0]), int(want), len(grammar_ids)))
+        except Exception as e:
+            _log("grammar bitmask narrow failed: %r" % (e,))
+'''
+XG_FILES = ("vllm/v1/structured_output/backend_xgrammar.py", "vllm/v1/structured_output/__init__.py")
+XG_MOUNT_INSERT = "".join(
+    '        "--mount", f"type=bind,src={values[\'JSPARK_RECIPE_ROOT\'].rstrip(\'/\').rsplit(\'/\', 1)[0]}'
+    f'/xgrammar/{f},dst=/usr/local/lib/python3.12/dist-packages/{f},readonly",\n'
+    for f in XG_FILES
+)
+XG_EXPECTED_INSERT = "".join(
+    f'        "/usr/local/lib/python3.12/dist-packages/{f}":\n'
+    '            (f"{values[\'JSPARK_RECIPE_ROOT\'].rstrip(\'/\').rsplit(\'/\', 1)[0]}' + f'/xgrammar/{f}", False),\n'
+    for f in XG_FILES
+)
 
 
 def sha(path: Path) -> str:
@@ -118,6 +168,18 @@ def main() -> int:
         backup(p, backdir, ".pre-e3")
     b5_old_sha = sha(b5)
     replace_sha(b5, OLD_EXL3_SHA, new_sha, 1)
+    # 2c. B5 narrows a lone full spec row 8 -> 4 tokens on the worker, but the scheduler's grammar bitmask still
+    #     carries 8 rows for that request -> StructuredOutputsWorker.apply_grammar_bitmask asserts
+    #     num_masks == len(mapping) and the engine dies (every JSON-schema / tool_choice=required request
+    #     eventually hits it; it took the cluster down twice on 2026-09-14). Narrow the bitmask alongside.
+    b5_text = b5.read_text()
+    if "GRAMMAR_BITMASK_NARROWED" not in b5_text:
+        if b5_text.count(B5_ANCHOR) != 1:
+            raise SystemExit("b5_prefix_verify.py: sample_tokens anchor not found")
+        b5_text = b5_text.replace(B5_ANCHOR, B5_GRAMMAR_FIX + B5_ANCHOR)
+        compile(b5_text, "b5_prefix_verify.py", "exec")
+        b5.write_text(b5_text)
+        print("  b5_prefix_verify.py: grammar-bitmask narrowing fix inserted")
     b5_new_sha = sha(b5)
     if b5_new_sha != b5_old_sha:
         replace_sha(cadence, b5_old_sha, b5_new_sha, 1)
@@ -161,6 +223,17 @@ def main() -> int:
         if text.count(EXPECTED_ANCHOR) != 1:
             raise SystemExit("fleetctl.py: expected_mounts anchor not found")
         text = text.replace(EXPECTED_ANCHOR, EXPECTED_ANCHOR + EXPECTED_INSERT)
+    xg_dir = recipe.parent / "xgrammar"
+    if all((xg_dir / f).is_file() for f in XG_FILES):
+        if "xgrammar/vllm/v1/structured_output/backend_xgrammar.py,dst=" not in text:
+            text = text.replace(MOUNT_ANCHOR + MOUNT_INSERT, MOUNT_ANCHOR + MOUNT_INSERT + XG_MOUNT_INSERT)
+        if '"/usr/local/lib/python3.12/dist-packages/vllm/v1/structured_output/backend_xgrammar.py":' not in text:
+            text = text.replace(EXPECTED_ANCHOR + EXPECTED_INSERT, EXPECTED_ANCHOR + EXPECTED_INSERT + XG_EXPECTED_INSERT)
+        if text.count("xgrammar/vllm/v1/structured_output/") != 4:
+            raise SystemExit("fleetctl.py: xgrammar mount insertion failed")
+        print("  fleetctl.py: xgrammar backport mounts in place")
+    else:
+        print("  xgrammar/ not present on this node: skipping the xgrammar mounts (fine, but then ALL ranks must skip)")
     fleetctl.write_text(text)
     compile(text, "fleetctl.py", "exec")
     print("  fleetctl.py: env + mount + expected target set in place")
