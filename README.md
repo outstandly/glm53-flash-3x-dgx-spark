@@ -123,6 +123,43 @@ All paths must be **identical on every node**. We use `/home/<user>/…`; jspark
     Working order: `stop.sh … --remove` → move the manifest and `~/jspark3-work` aside on all ranks →
     remove stray containers → `clean-room-setup.sh` → `start.sh`.
 
+## Step 11 (optional, +30–40 % prefill): MiaAI-Lab's E3 grouped fat-expert MoE kernels
+
+The jspark3-pinned image (28 Aug) predates Mia's E2/E3 fat-expert kernels. Both images run the same vLLM
+build, torch 2.13.0+cu130 and exllamav3 0.0.43, so E3 can be layered on without changing the image digest:
+
+1. **Build the additive kernel module inside the pinned image** (53 s on a GB10, no GPU needed for the build,
+   but `--gpus all` is the easy way to get the CUDA runtime). Needs a checkout of
+   `MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks` (AGPL-3.0; nothing of it is redistributed here):
+   ```bash
+   M=~/GLM-5.3-Flash-EXL3-2x-DGX-Sparks/overlay; mkdir -p ~/e3build/out
+   cp $M/exl3_fat_moe.cu $M/exl3_fat_moe.cuh $M/build_exl3_fat_moe_ext.py ~/e3build/
+   docker run --rm --gpus all --memory 6g -e MAX_JOBS=1 -v ~/e3build:/build --entrypoint python3 \
+     ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:9bb1557a4234fce63d59599e44d10747eabd742beb337eebf9e7070be8a0fd58 \
+     /build/build_exl3_fat_moe_ext.py --src /build --out /build/out
+   mkdir -p ~/recipe-jspark3/e3 && cp ~/e3build/out/exl3_fat_moe_ext.so ~/recipe-jspark3/e3/   # then copy to every rank
+   ```
+2. **Merge Mia's current `overlay/exl3.py`** (carries the E2/E3 tiers) **with FlyCockpit's two TP3/EP load fixes:**
+   `python3 patches/e3-merge-exl3.py $M/exl3.py` → `/tmp/exl3_merged.py`. Copy it to every rank.
+3. **Apply `patches/jspark3-e3-patch.py /tmp/exl3_merged.py` on every rank** (idempotent). It replaces the
+   FlyCockpit overlay file, then chases the sha through every layer jspark3 pins it in — and there are many:
+   - `scripts/_contracts.py` and `config/patch-contract.json` (exl3.py source/after sha),
+   - `scripts/fleetctl.py`: recomputed `transform_target_set_sha256`, the E3 env
+     (`EXL3_FAT_GROUPED=1 EXL3_TEMP_ROWS_FUSED=32 MAX_NUM_BATCHED_TOKENS=8192`), a read-only bind mount of the
+     `.so` into the container's `dist-packages`, **and** the same mount in `expected_mounts` (otherwise
+     `rankN mount contract drift`),
+   - `modules/b5_prefix_verify.py`: the Cadence module's own hash gate over image files (otherwise the container
+     dies with `B5_PREFIX_VERIFY_REFUSE hash gate failed: exl3.py`, exit 9, right after "Using max model len"),
+     which in turn is pinned in `fleetctl.py B45_MODULES` and `config/cadence-contract.json`,
+   - the `SHA256SUMS` rows for all of the above.
+4. **Two more traps:** run `stop.sh` *before* changing `SHA256SUMS` (afterwards it refuses with
+   `manifest does not bind this environment/image`), and delete `recipe/scripts/__pycache__` if anything imported
+   the recipe modules (`generated/private recipe directory`). Then step 9 again.
+
+You know it worked when rank 0 logs `exl3 e2 diag … configured_tier=grouped effective_tier=grouped tier_reason=grouped_ok
+sym_fat_moe=1`. KV pool 1,786,610 → 1,778,242 tokens (the E3 scratch), memory headroom unchanged. Cold prefill
+(unique prompts, `scripts/prefill-bench.py`): see `results/bench-2026-09-14.md` — roughly 1,200 → 1,600–1,750 tok/s.
+
 ## Using it
 
 - OpenAI-compatible API on rank 0, port 8000, model id **`glm-5.3-flash`**, 1M context, images accepted
@@ -133,7 +170,6 @@ All paths must be **identical on every node**. We use `/home/<user>/…`; jspark
 
 ## What's next (not done here)
 
-- Port MiaAI-Lab's E3 grouped fat-expert MoE prefill (+37–45 % prefill on two nodes) into this image.
 - Mia's small NCCL buffers (`NCCL_BUFFSIZE=1048576`, `NCCL_LL128_BUFFSIZE=262144`, `NCCL_PROTO=^LL128`)
   freed 4.7 GB of pinned memory per node on two nodes; jspark3's env parser forbids `NCCL_PROTO`, so this
   needs a small launcher change.

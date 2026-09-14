@@ -11,8 +11,12 @@ Third-party work this setup depends on, with licences as published by their auth
 - FlyCockpit/GLM-5.3-Flash-EXL3-3x-DGX-Sparks (MIT) - TP3 + expert-parallel technique, chat template.
   https://github.com/FlyCockpit/GLM-5.3-Flash-EXL3-3x-DGX-Sparks
 - MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks (AGPL-3.0) - engine image
-  ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks (pulled by digest, not redistributed) and the
-  vision flags reused here. https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks
+  ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks (pulled by digest, not redistributed), the
+  vision flags reused here, and the E3 grouped fat-expert kernels (overlay/exl3_fat_moe.cu/.cuh,
+  overlay/build_exl3_fat_moe_ext.py, overlay/exl3.py). None of those files, nor the compiled
+  exl3_fat_moe_ext.so, nor the merged exl3.py is redistributed: patches/e3-merge-exl3.py and
+  patches/jspark3-e3-patch.py operate on YOUR checkout of Mia's repository, and what they produce
+  is AGPL-3.0 work derived from it. https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks
 - NNNtrance/GLM-5.3-Flash-EXL3-DGX-Spark - hardware notes and the CX7 hotplug fix
   (credited there to digchick/dgx-spark-200g-link-fix).
 - Target checkpoint: brandonmusic/GLM-5.3-Flash-tr3-4bpw, mirrored byte-identically as
