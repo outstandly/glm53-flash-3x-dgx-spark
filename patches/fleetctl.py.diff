@@ -1,0 +1,20 @@
+--- fork-backups/fleetctl.py.orig	2026-09-14 00:15:24.730596224 +0200
++++ recipe/scripts/fleetctl.py	2026-09-14 00:15:47.863583899 +0200
+@@ -279,13 +279,15 @@
+         "--served-model-name", "glm-5.3-flash", "--host", values["JSPARK_API_BIND"],
+         "--port", values["JSPARK_API_PORT"], "--trust-remote-code", "--quantization", "exl3",
+         "--tensor-parallel-size", "3", "--pipeline-parallel-size", "1",
+-        "--gpu-memory-utilization", "0.83", "--max-model-len", "1000000",
++        "--gpu-memory-utilization", "0.78", "--max-model-len", "1000000",  # JONATHAN-FORK: util 0.83->0.78
+         "--max-num-seqs", "32", "--max-num-batched-tokens", "8192",
+         "--kv-cache-dtype", "fp8", "--enable-prefix-caching", "--no-enable-flashinfer-autotune",
+         "--distributed-executor-backend", "mp", "--nnodes", "3", "--node-rank", str(rank),
+         "--master-addr", values["JSPARK_MASTER_ADDR"], "--master-port", values["JSPARK_MASTER_PORT"],
+         "--tool-call-parser", "glm47", "--enable-auto-tool-choice", "--reasoning-parser", "glm45",
+-        "--language-model-only", "--mm-encoder-tp-mode", "data", "--enable-expert-parallel",
++        # JONATHAN-FORK 2026-09-14: vision på (Mias flaggor) i stället för --language-model-only
++        "--skip-mm-profiling", "--limit-mm-per-prompt", '{"image":400,"video":1}',
++        "--mm-encoder-tp-mode", "data", "--enable-expert-parallel",
+         "--hf-overrides", overrides, "--speculative-config", speculative,
+         "--compilation-config", compilation,
+         "--default-chat-template-kwargs", "{\"enable_thinking\":false}",

@@ -1,0 +1,25 @@
+This repository contains documentation, helper scripts and a small patch. It redistributes no model
+weights, no drafter, no container image and no third-party source tree.
+
+Third-party work this setup depends on, with licences as published by their authors:
+
+- jakejharris/jspark3 (Apache-2.0). `patches/fleetctl.py.diff` and `patches/jspark3-fork-patch.py`
+  modify `recipe/scripts/fleetctl.py` from jspark3 v1.1 (commit 7021055). Changes: remove
+  `--language-model-only`, add `--skip-mm-profiling` and `--limit-mm-per-prompt`, change
+  `--gpu-memory-utilization` 0.83 -> 0.78, and recompute the corresponding `SHA256SUMS` line.
+  https://github.com/jakejharris/jspark3
+- FlyCockpit/GLM-5.3-Flash-EXL3-3x-DGX-Sparks (MIT) - TP3 + expert-parallel technique, chat template.
+  https://github.com/FlyCockpit/GLM-5.3-Flash-EXL3-3x-DGX-Sparks
+- MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks (AGPL-3.0) - engine image
+  ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks (pulled by digest, not redistributed) and the
+  vision flags reused here. https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks
+- NNNtrance/GLM-5.3-Flash-EXL3-DGX-Spark - hardware notes and the CX7 hotplug fix
+  (credited there to digchick/dgx-spark-200g-link-fix).
+- Target checkpoint: brandonmusic/GLM-5.3-Flash-tr3-4bpw, mirrored byte-identically as
+  Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw - ShapleyMcg License v1.0 (attribution required; read it).
+- Drafter: incoai/GLM-5.3-Flash-DFlash2 - CC BY-NC-ND 4.0 (non-commercial; our permission does not
+  transfer to you).
+- Model: zai-org/GLM-5.3-Flash (MIT). Engine: vLLM (Apache-2.0), ExLlamaV3 by turboderp (MIT).
+
+Our own files (README, scripts, examples, results, the patch as a derived work of the Apache-2.0
+launcher) are released under the MIT licence in LICENSE, without prejudice to the upstream licences above.
