@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Cold-prefill benchmark: unique random prompts (defeats prefix cache), max_tokens=1.
 Reports prompt tokens / wall time = prefill tok/s."""
-import json, random, sys, time, urllib.request
+import json, os, random, sys, time, urllib.request
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000/v1/chat/completions"
 SIZES = [int(s) for s in (sys.argv[2].split(",") if len(sys.argv) > 2 else ["8000", "32000", "100000"])]
 REPS = int(sys.argv[3]) if len(sys.argv) > 3 else 2
+MODEL = os.environ.get("MODEL", "glm-5.3-flash")
+KEY = os.environ.get("KEY", "")
 WORDS = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa "
          "quebec romeo sierra tango uniform victor whiskey xray yankee zulu server kernel tensor spark node "
          "matrix vector gradient token layer expert router cache block page memory fabric ring switch").split()
@@ -20,9 +22,9 @@ def prompt(n_tokens, seed):
 
 for n in SIZES:
     for r in range(REPS):
-        body = json.dumps({"model": "glm-5.3-flash", "messages": [{"role": "user", "content": prompt(n, time.time_ns() + r)}],
+        body = json.dumps({"model": MODEL, "messages": [{"role": "user", "content": prompt(n, time.time_ns() + r)}],
                            "max_tokens": 1, "temperature": 0}).encode()
-        req = urllib.request.Request(URL, data=body, headers={"Content-Type": "application/json"})
+        req = urllib.request.Request(URL, data=body, headers={"Content-Type": "application/json", **({"Authorization": "Bearer " + KEY} if KEY else {})})
         t0 = time.time()
         try:
             with urllib.request.urlopen(req, timeout=1800) as resp:
